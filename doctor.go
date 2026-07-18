@@ -28,8 +28,10 @@ func (a *app) doctor(args []string, store *Store) int {
 		a.doctorLine(false, "store", "%v", err)
 		failures++
 	} else if _, err := os.Stat(store.Path); err != nil {
-		a.doctorLine(false, "store", "missing: %s", store.Path)
-		failures++
+		// Not a failure: the store is created on first write, so its absence
+		// means "nothing scheduled yet", which is the normal state for a fresh
+		// install. Reporting it as broken would make every first run look wrong.
+		a.doctorLine(true, "store", "no reminders scheduled yet (%s)", store.Path)
 	} else if skipped != 0 {
 		a.doctorLine(false, "store", "readable, but skipped %d corrupt line(s)", skipped)
 		failures++
