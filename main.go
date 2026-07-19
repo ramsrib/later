@@ -12,7 +12,9 @@ import (
 	"github.com/ramsrib/later/internal/store"
 )
 
-const version = "2.0.0"
+// Stamped at build time by the release script: -X main.version=v0.1.0.
+// "dev" is what a plain `go build` reports.
+var version = "dev"
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
