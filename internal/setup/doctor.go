@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"errors"
@@ -7,9 +7,11 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ramsrib/later/internal/store"
 )
 
-func (a *app) doctor(args []string, store *Store) int {
+func (a *app) doctor(args []string, queue *store.Store) int {
 	fs := newFlagSet("doctor", `later doctor`, a.stderr)
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -23,23 +25,23 @@ func (a *app) doctor(args []string, store *Store) int {
 		return 1
 	}
 	failures := 0
-	items, skipped, err := store.Read()
+	items, skipped, err := queue.Read()
 	if err != nil {
 		a.doctorLine(false, "store", "%v", err)
 		failures++
-	} else if _, err := os.Stat(store.Path); err != nil {
+	} else if _, err := os.Stat(queue.Path()); err != nil {
 		// Not a failure: the store is created on first write, so its absence
 		// means "nothing scheduled yet", which is the normal state for a fresh
 		// install. Reporting it as broken would make every first run look wrong.
-		a.doctorLine(true, "store", "no reminders scheduled yet (%s)", store.Path)
+		a.doctorLine(true, "store", "no reminders scheduled yet (%s)", queue.Path())
 	} else if skipped != 0 {
 		a.doctorLine(false, "store", "readable, but skipped %d corrupt line(s)", skipped)
 		failures++
 	} else {
 		a.doctorLine(true, "store", "%d record(s), 0 corrupt lines", len(items))
 	}
-	if _, err := os.Stat(store.tmpPath()); err == nil {
-		a.doctorLine(false, "stale .tmp", "present: %s (another command will remove it on startup)", store.tmpPath())
+	if _, err := os.Stat(queue.TemporaryPath()); err == nil {
+		a.doctorLine(false, "stale .tmp", "present: %s (another command will remove it on startup)", queue.TemporaryPath())
 		failures++
 	} else if errors.Is(err, os.ErrNotExist) {
 		a.doctorLine(true, "stale .tmp", "absent")

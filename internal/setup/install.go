@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"bytes"
@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/ramsrib/later/internal/store"
 )
 
 const hookCommand = "later check --quiet-if-empty"
 
-func (a *app) install(args []string, _ *Store) error {
+func (a *app) install(args []string, _ *store.Store) error {
 	fs := newFlagSet("install", `later install (--claude | --codex | --all)`, a.stderr)
 	claude := fs.Bool("claude", false, "install the Claude Code UserPromptSubmit hook")
 	codex := fs.Bool("codex", false, "install the Codex UserPromptSubmit hook")

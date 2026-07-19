@@ -1,4 +1,4 @@
-package main
+package remind
 
 import (
 	"crypto/rand"
@@ -10,9 +10,11 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/ramsrib/later/internal/store"
 )
 
-func (a *app) add(args []string, store *Store) error {
+func (a *app) add(args []string, queue *store.Store) error {
 	fs := newFlagSet("add", `later add --subject S [--body B|-] (--at TIME | --in DUR) [--recur DUR] [--global] [--id ID]`, a.stderr)
 	subject := fs.String("subject", "", "short reminder subject (required)")
 	bodyValue := fs.String("body", "", "longer detail, or - to read stdin")
@@ -75,8 +77,8 @@ func (a *app) add(args []string, store *Store) error {
 	if strings.ContainsAny(id, " \t\r\n") || id == "" {
 		return fmt.Errorf("id must be non-empty and contain no whitespace")
 	}
-	item := Item{ID: id, Subject: *subject, Body: body, Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: now.UTC(), By: detectAgent()}
-	if err := store.Update(func(items []Item) ([]Item, error) {
+	item := store.Item{ID: id, Subject: *subject, Body: body, Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: now.UTC(), By: detectAgent()}
+	if err := queue.Update(func(items []store.Item) ([]store.Item, error) {
 		for _, existing := range items {
 			if existing.ID == id {
 				return nil, fmt.Errorf("id %q already exists", id)
@@ -125,8 +127,8 @@ func generatedID(subject string) (string, error) {
 	return slug + "-" + hex.EncodeToString(random), nil
 }
 
-func dueItems(items []Item, scope string, now time.Time) []Item {
-	var due []Item
+func dueItems(items []store.Item, scope string, now time.Time) []store.Item {
+	var due []store.Item
 	for _, item := range items {
 		if item.DoneAt == nil && !now.Before(item.NotBefore) && (item.Scope == scope || item.Scope == "global") {
 			due = append(due, item)
@@ -136,7 +138,7 @@ func dueItems(items []Item, scope string, now time.Time) []Item {
 	return due
 }
 
-func (a *app) check(args []string, store *Store) error {
+func (a *app) check(args []string, queue *store.Store) error {
 	fs := newFlagSet("check", `later check [--quiet-if-empty] [--json]`, a.stderr)
 	quiet := fs.Bool("quiet-if-empty", false, "print nothing when no reminders are due")
 	jsonOutput := fs.Bool("json", false, "emit due records as JSON")
@@ -150,7 +152,7 @@ func (a *app) check(args []string, store *Store) error {
 	if err != nil {
 		return err
 	}
-	items, skipped, err := store.Read()
+	items, skipped, err := queue.Read()
 	if err != nil {
 		return err
 	}
@@ -183,7 +185,7 @@ func (a *app) check(args []string, store *Store) error {
 	return nil
 }
 
-func (a *app) list(args []string, store *Store) error {
+func (a *app) list(args []string, queue *store.Store) error {
 	fs := newFlagSet("list", `later list [--all] [--here] [--json]`, a.stderr)
 	all := fs.Bool("all", false, "include every project scope")
 	here := fs.Bool("here", false, "only this project, excluding global reminders")
@@ -198,7 +200,7 @@ func (a *app) list(args []string, store *Store) error {
 	if err != nil {
 		return err
 	}
-	items, skipped, err := store.Read()
+	items, skipped, err := queue.Read()
 	if err != nil {
 		return err
 	}
@@ -230,7 +232,7 @@ func (a *app) list(args []string, store *Store) error {
 	return nil
 }
 
-func sortItems(items []Item, now time.Time) {
+func sortItems(items []store.Item, now time.Time) {
 	sort.SliceStable(items, func(i, j int) bool {
 		iOverdue := !now.Before(items[i].NotBefore)
 		jOverdue := !now.Before(items[j].NotBefore)
@@ -286,7 +288,7 @@ func sameLocalDay(x, y time.Time) bool {
 // widestID sizes the ID column to the longest id being printed. The id is the
 // handle the reader must type back into `show`/`done`, so it is the one field
 // that must never be elided — truncate the subject instead.
-func widestID(items []Item, min int) int {
+func widestID(items []store.Item, min int) int {
 	w := min
 	for _, it := range items {
 		if n := len([]rune(it.ID)); n > w {
@@ -313,16 +315,16 @@ func writeJSON(w interface{ Write([]byte) (int, error) }, value any) error {
 	return enc.Encode(value)
 }
 
-func findItem(items []Item, id string) (Item, bool) {
+func findItem(items []store.Item, id string) (store.Item, bool) {
 	for _, item := range items {
 		if item.ID == id {
 			return item, true
 		}
 	}
-	return Item{}, false
+	return store.Item{}, false
 }
 
-func (a *app) show(args []string, store *Store) error {
+func (a *app) show(args []string, queue *store.Store) error {
 	fs := newFlagSet("show", `later show <id>`, a.stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -330,7 +332,7 @@ func (a *app) show(args []string, store *Store) error {
 	if err := requireArgs(fs, fs.Args(), 1, "one reminder id"); err != nil {
 		return err
 	}
-	items, _, err := store.Read()
+	items, _, err := queue.Read()
 	if err != nil {
 		return err
 	}
@@ -364,7 +366,7 @@ func advanceAfter(notBefore time.Time, recur time.Duration, now time.Time) time.
 	return notBefore.Add(missed * recur)
 }
 
-func (a *app) done(args []string, store *Store) error {
+func (a *app) done(args []string, queue *store.Store) error {
 	fs := newFlagSet("done", `later done <id>`, a.stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -375,7 +377,7 @@ func (a *app) done(args []string, store *Store) error {
 	id := fs.Arg(0)
 	var message string
 	now := a.now().UTC()
-	err := store.Update(func(items []Item) ([]Item, error) {
+	err := queue.Update(func(items []store.Item) ([]store.Item, error) {
 		for i := range items {
 			if items[i].ID != id {
 				continue
@@ -405,7 +407,7 @@ func (a *app) done(args []string, store *Store) error {
 	return nil
 }
 
-func (a *app) cancel(args []string, store *Store) error {
+func (a *app) cancel(args []string, queue *store.Store) error {
 	fs := newFlagSet("cancel", `later cancel <id>`, a.stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -415,7 +417,7 @@ func (a *app) cancel(args []string, store *Store) error {
 	}
 	id := fs.Arg(0)
 	var subject string
-	err := store.Update(func(items []Item) ([]Item, error) {
+	err := queue.Update(func(items []store.Item) ([]store.Item, error) {
 		for i, item := range items {
 			if item.ID == id {
 				subject = item.Subject
@@ -428,35 +430,5 @@ func (a *app) cancel(args []string, store *Store) error {
 		return err
 	}
 	fmt.Fprintf(a.stdout, "Cancelled %s: %s\n", id, subject)
-	return nil
-}
-
-func (a *app) rescope(args []string, store *Store) error {
-	fs := newFlagSet("rescope", `later rescope <old-path> <new-path>`, a.stderr)
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if err := requireArgs(fs, fs.Args(), 2, "an old path and a new path"); err != nil {
-		return err
-	}
-	oldPath := strings.TrimSuffix(fs.Arg(0), string(filepath.Separator))
-	newPath, err := canonicalPath(fs.Arg(1))
-	if err != nil {
-		return fmt.Errorf("resolve new path: %w", err)
-	}
-	count := 0
-	err = store.Update(func(items []Item) ([]Item, error) {
-		for i := range items {
-			if strings.HasPrefix(items[i].Scope, oldPath) {
-				items[i].Scope = newPath + strings.TrimPrefix(items[i].Scope, oldPath)
-				count++
-			}
-		}
-		return items, nil
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(a.stdout, "Rescoped %d record(s).\n", count)
 	return nil
 }

@@ -1,4 +1,4 @@
-package main
+package setup
 
 import (
 	"bufio"
@@ -9,14 +9,16 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ramsrib/later/internal/store"
 )
 
 type migrationCandidate struct {
-	Item       Item
+	Item       store.Item
 	Unresolved bool
 }
 
-func (a *app) migrate(args []string, store *Store) error {
+func (a *app) migrate(args []string, queue *store.Store) error {
 	fsFlags := newFlagSet("migrate", `later migrate [--dry-run]`, a.stderr)
 	dryRun := fsFlags.Bool("dry-run", false, "report imports without writing the v2 store")
 	if err := fsFlags.Parse(args); err != nil {
@@ -33,7 +35,7 @@ func (a *app) migrate(args []string, store *Store) error {
 	if err != nil {
 		return err
 	}
-	existing, _, err := store.Read()
+	existing, _, err := queue.Read()
 	if err != nil {
 		return err
 	}
@@ -55,7 +57,7 @@ func (a *app) migrate(args []string, store *Store) error {
 		return nil
 	}
 	imported := 0
-	if err := store.Update(func(items []Item) ([]Item, error) {
+	if err := queue.Update(func(items []store.Item) ([]store.Item, error) {
 		ids := make(map[string]bool, len(items))
 		for _, item := range items {
 			ids[item.ID] = true
@@ -151,7 +153,7 @@ func readDoneFile(path string) (map[string]bool, time.Time, error) {
 	return ids, info.ModTime().UTC(), nil
 }
 
-func parseLegacyFile(path, scope string, doneIDs map[string]bool, doneAt time.Time) ([]Item, error) {
+func parseLegacyFile(path, scope string, doneIDs map[string]bool, doneAt time.Time) ([]store.Item, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -175,7 +177,7 @@ func parseLegacyFile(path, scope string, doneIDs map[string]bool, doneAt time.Ti
 		current.WriteByte('\n')
 	}
 	flush()
-	var items []Item
+	var items []store.Item
 	for _, chunk := range chunks {
 		item, ok := parseLegacyRecord(chunk, scope)
 		if !ok {
@@ -190,10 +192,10 @@ func parseLegacyFile(path, scope string, doneIDs map[string]bool, doneAt time.Ti
 	return items, nil
 }
 
-func parseLegacyRecord(record, scope string) (Item, bool) {
+func parseLegacyRecord(record, scope string) (store.Item, bool) {
 	parts := strings.SplitN(record, "\n\n", 2)
 	if len(parts) != 2 {
-		return Item{}, false
+		return store.Item{}, false
 	}
 	headers := map[string]string{}
 	for _, line := range strings.Split(parts[0], "\n") {
@@ -207,14 +209,14 @@ func parseLegacyRecord(record, scope string) (Item, bool) {
 	notBefore, err1 := time.Parse(time.RFC3339, headers["X-Later-Scheduled-For"])
 	createdAt, err2 := time.Parse(time.RFC3339, headers["X-Later-Created-At"])
 	if id == "" || subject == "" || err1 != nil || err2 != nil {
-		return Item{}, false
+		return store.Item{}, false
 	}
 	var recur *string
 	if value := headers["X-Later-Recur"]; value != "" {
 		value = strings.TrimPrefix(value, "+")
 		recur = &value
 	}
-	return Item{ID: id, Subject: subject, Body: strings.TrimSuffix(parts[1], "\n"), Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: createdAt.UTC(), By: "claude"}, true
+	return store.Item{ID: id, Subject: subject, Body: strings.TrimSuffix(parts[1], "\n"), Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: createdAt.UTC(), By: "claude"}, true
 }
 
 // The v1 encoding replaced both slashes and literal dashes with dashes. Walk

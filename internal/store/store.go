@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"bufio"
@@ -25,10 +25,10 @@ type Item struct {
 }
 
 type Store struct {
-	Path string
+	path string
 }
 
-func openStore(cleanup bool) (*Store, error) {
+func Open(cleanup bool) (*Store, error) {
 	path := os.Getenv("LATER_STORE")
 	if path == "" {
 		home, err := os.UserHomeDir()
@@ -41,7 +41,7 @@ func openStore(cleanup bool) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve store path: %w", err)
 	}
-	s := &Store{Path: filepath.Clean(abs)}
+	s := &Store{path: filepath.Clean(abs)}
 	if cleanup {
 		if err := s.cleanupStaleTemp(); err != nil {
 			return nil, err
@@ -50,9 +50,16 @@ func openStore(cleanup bool) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) tmpPath() string  { return s.Path + ".tmp" }
-func (s *Store) bakPath() string  { return s.Path + ".bak" }
-func (s *Store) lockPath() string { return filepath.Join(filepath.Dir(s.Path), ".lock") }
+func (s *Store) tmpPath() string  { return s.path + ".tmp" }
+func (s *Store) bakPath() string  { return s.path + ".bak" }
+func (s *Store) lockPath() string { return filepath.Join(filepath.Dir(s.path), ".lock") }
+
+// Path returns the absolute JSONL store path.
+func (s *Store) Path() string { return s.path }
+
+// TemporaryPath returns the predictable same-directory path used during an
+// atomic store replacement.
+func (s *Store) TemporaryPath() string { return s.tmpPath() }
 
 func (s *Store) cleanupStaleTemp() error {
 	if _, err := os.Stat(s.tmpPath()); errors.Is(err, os.ErrNotExist) {
@@ -82,7 +89,7 @@ func (s *Store) cleanupStaleTemp() error {
 }
 
 func (s *Store) Read() ([]Item, int, error) {
-	f, err := os.Open(s.Path)
+	f, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0, nil
 	}
@@ -122,7 +129,7 @@ func readItems(r io.Reader) ([]Item, int, error) {
 // file. Readers intentionally take no lock: rename guarantees they see either
 // the old generation or the new one, never a partially rewritten queue.
 func (s *Store) Update(fn func([]Item) ([]Item, error)) error {
-	if err := os.MkdirAll(filepath.Dir(s.Path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
 	lock, err := os.OpenFile(s.lockPath(), os.O_CREATE|os.O_RDWR, 0o600)
@@ -150,7 +157,7 @@ func (s *Store) Update(fn func([]Item) ([]Item, error)) error {
 }
 
 func (s *Store) backup() error {
-	src, err := os.Open(s.Path)
+	src, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -199,10 +206,10 @@ func (s *Store) replace(items []Item) error {
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("close temporary store: %w", err)
 	}
-	if err := os.Rename(s.tmpPath(), s.Path); err != nil {
+	if err := os.Rename(s.tmpPath(), s.path); err != nil {
 		return fmt.Errorf("replace store: %w", err)
 	}
-	if dir, err := os.Open(filepath.Dir(s.Path)); err == nil {
+	if dir, err := os.Open(filepath.Dir(s.path)); err == nil {
 		_ = dir.Sync()
 		_ = dir.Close()
 	}

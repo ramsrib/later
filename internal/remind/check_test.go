@@ -1,14 +1,16 @@
-package main
+package remind
 
 import (
 	"testing"
 	"time"
+
+	"github.com/ramsrib/later/internal/store"
 )
 
 func TestDueItemsRoutesProjectAndGlobal(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	done := now.Add(-time.Hour)
-	items := []Item{
+	items := []store.Item{
 		{ID: "here-due", Scope: "/projects/here", NotBefore: now.Add(-time.Minute)},
 		{ID: "global-due", Scope: "global", NotBefore: now.Add(-time.Hour)},
 		{ID: "other-due", Scope: "/projects/other", NotBefore: now.Add(-time.Hour)},

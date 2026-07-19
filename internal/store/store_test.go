@@ -1,4 +1,4 @@
-package main
+package store
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ func tempStore(t *testing.T) *Store {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "nested", "items.jsonl")
 	t.Setenv("LATER_STORE", path)
-	store, err := openStore(true)
+	store, err := Open(true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestStoreAtomicRewriteAndBackup(t *testing.T) {
 	if err != nil || skipped != 0 || len(backupItems) != 1 || backupItems[0].ID != "first" {
 		t.Fatalf("backup store: items=%#v skipped=%d err=%v", backupItems, skipped, err)
 	}
-	info, err := os.Stat(store.Path)
+	info, err := os.Stat(store.path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,13 +57,13 @@ func TestStoreAtomicRewriteAndBackup(t *testing.T) {
 
 func TestCorruptLineTolerance(t *testing.T) {
 	store := tempStore(t)
-	if err := os.MkdirAll(filepath.Dir(store.Path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	valid1, _ := json.Marshal(Item{ID: "one", Scope: "global"})
 	valid2, _ := json.Marshal(Item{ID: "two", Scope: "global"})
 	data := append(append(append(valid1, '\n'), []byte("{not json}\n")...), append(valid2, '\n')...)
-	if err := os.WriteFile(store.Path, data, 0o600); err != nil {
+	if err := os.WriteFile(store.path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	items, skipped, err := store.Read()
@@ -84,7 +84,7 @@ func TestOpenStoreRemovesStaleTemporaryFile(t *testing.T) {
 	if err := os.WriteFile(path+".tmp", []byte("partial"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openStore(true); err != nil {
+	if _, err := Open(true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
@@ -108,7 +108,7 @@ func TestOpenStoreDoesNotRemoveActiveWritersTemporaryFile(t *testing.T) {
 	if err := os.WriteFile(path+".tmp", []byte("active writer"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := openStore(true); err != nil {
+	if _, err := Open(true); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(path + ".tmp"); err != nil {
