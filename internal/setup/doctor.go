@@ -51,7 +51,7 @@ func (a *app) doctor(args []string, queue *store.Store) int {
 	}
 
 	claudePath, _ := claudeSettingsPath()
-	if present, err := hookPresentAt(claudePath); err != nil || !present {
+	if present, err := hookPresentAt(claudePath, claudeHookCommand); err != nil || !present {
 		if err == nil {
 			err = errors.New("command not found in UserPromptSubmit hooks")
 		}
@@ -62,7 +62,7 @@ func (a *app) doctor(args []string, queue *store.Store) int {
 	}
 
 	codexPath, _ := codexHooksPath()
-	codexPresent, codexErr := hookPresentAt(codexPath)
+	codexPresent, codexErr := hookPresentAt(codexPath, codexHookCommand)
 	if codexErr != nil || !codexPresent {
 		if codexErr == nil {
 			codexErr = errors.New("command not found in UserPromptSubmit hooks")

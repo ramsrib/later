@@ -19,11 +19,11 @@ func TestMergeHookFilePreservesKeysAndIsIdempotent(t *testing.T) {
 	if err := os.WriteFile(path, []byte(original), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	added, err := mergeHookFile(path)
+	added, err := mergeHookFile(path, claudeHookCommand)
 	if err != nil || !added {
 		t.Fatalf("first merge: added=%v err=%v", added, err)
 	}
-	added, err = mergeHookFile(path)
+	added, err = mergeHookFile(path, claudeHookCommand)
 	if err != nil || added {
 		t.Fatalf("second merge: added=%v err=%v", added, err)
 	}
@@ -38,12 +38,45 @@ func TestMergeHookFilePreservesKeysAndIsIdempotent(t *testing.T) {
 	if err := json.Unmarshal(b, &root); err != nil {
 		t.Fatal(err)
 	}
-	if root["theme"] != "dark" || !hasHook(root) {
+	if root["theme"] != "dark" || !hasHook(root, claudeHookCommand) {
 		t.Fatalf("merge clobbered keys or missed hook: %s", b)
 	}
 	info, _ := os.Stat(path)
 	if info.Mode().Perm() != 0o640 {
 		t.Fatalf("mode = %o, want 640", info.Mode().Perm())
+	}
+}
+
+// A hooks file written by an older later carries the plain-text command, which
+// Codex rejects; installing again must rewrite it rather than append a second.
+func TestMergeHookFileUpgradesTheOtherAgentsCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	stale := `{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "` + claudeHookCommand + `"}]}]}}`
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	added, err := mergeHookFile(path, codexHookCommand)
+	if err != nil || !added {
+		t.Fatalf("upgrade: added=%v err=%v", added, err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := map[string]any{}
+	if err := json.Unmarshal(b, &root); err != nil {
+		t.Fatal(err)
+	}
+	if !hasHook(root, codexHookCommand) || hasHook(root, claudeHookCommand) {
+		t.Fatalf("stale command survived the upgrade: %s", b)
+	}
+	event := root["hooks"].(map[string]any)["UserPromptSubmit"].([]any)
+	if len(event) != 1 {
+		t.Fatalf("upgrade appended a second entry: %s", b)
+	}
+	added, err = mergeHookFile(path, codexHookCommand)
+	if err != nil || added {
+		t.Fatalf("re-merge after upgrade: added=%v err=%v", added, err)
 	}
 }
 

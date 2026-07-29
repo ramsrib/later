@@ -1,6 +1,10 @@
 package remind
 
 import (
+	"bytes"
+	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -45,5 +49,53 @@ func TestAdvanceAfterLeavesFutureOccurrenceAlone(t *testing.T) {
 	future := now.Add(time.Hour)
 	if got := advanceAfter(future, 7*24*time.Hour, now); !got.Equal(future) {
 		t.Fatalf("future occurrence changed from %s to %s", future, got)
+	}
+}
+
+// Codex parses hook stdout strictly as JSON, so every --hook-json path — due
+// and empty alike — has to stay parseable.
+func TestCheckHookJSONEmitsParseableEnvelope(t *testing.T) {
+	t.Setenv("LATER_STORE", filepath.Join(t.TempDir(), "items.jsonl"))
+	queue, err := store.Open(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func() map[string]any {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		if err := Run("check", []string{"--hook-json"}, queue, &stdout, &stderr); err != nil {
+			t.Fatalf("check --hook-json: %v (stderr=%s)", err, stderr.String())
+		}
+		got := map[string]any{}
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatalf("stdout is not JSON: %v (%s)", err, stdout.String())
+		}
+		return got
+	}
+	if got := run(); len(got) != 0 {
+		t.Fatalf("empty queue emitted %#v, want {}", got)
+	}
+	if err := queue.Update(func(items []store.Item) ([]store.Item, error) {
+		return append(items, store.Item{
+			ID:        "ping",
+			Subject:   "Ping the queue",
+			Scope:     "global",
+			NotBefore: time.Now().UTC().Add(-time.Minute),
+			CreatedAt: time.Now().UTC(),
+			By:        "shell",
+		}), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	specific, ok := run()["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		t.Fatal("due reminder produced no hookSpecificOutput")
+	}
+	if specific["hookEventName"] != "UserPromptSubmit" {
+		t.Fatalf("hookEventName = %v", specific["hookEventName"])
+	}
+	context, _ := specific["additionalContext"].(string)
+	if !strings.Contains(context, "ping") || !strings.Contains(context, "1 due") {
+		t.Fatalf("additionalContext missing the due reminder: %q", context)
 	}
 }

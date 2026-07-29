@@ -1,10 +1,12 @@
 package remind
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -139,9 +141,10 @@ func dueItems(items []store.Item, scope string, now time.Time) []store.Item {
 }
 
 func (a *app) check(args []string, queue *store.Store) error {
-	fs := newFlagSet("check", `later check [--quiet-if-empty] [--json]`, a.stderr)
+	fs := newFlagSet("check", `later check [--quiet-if-empty] [--json] [--hook-json]`, a.stderr)
 	quiet := fs.Bool("quiet-if-empty", false, "print nothing when no reminders are due")
 	jsonOutput := fs.Bool("json", false, "emit due records as JSON")
+	hookJSON := fs.Bool("hook-json", false, "emit the UserPromptSubmit hook envelope (required by Codex)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -163,26 +166,47 @@ func (a *app) check(args []string, queue *store.Store) error {
 	if *jsonOutput {
 		return writeJSON(a.stdout, due)
 	}
+	// Codex parses hook stdout strictly as JSON and fails the hook on anything
+	// else; Claude Code accepts the same envelope, so one shape serves both.
+	if *hookJSON {
+		if len(due) == 0 {
+			return writeJSON(a.stdout, map[string]any{})
+		}
+		var buf bytes.Buffer
+		a.writeDue(&buf, due)
+		return writeJSON(a.stdout, map[string]any{
+			"hookSpecificOutput": map[string]any{
+				"hookEventName":     "UserPromptSubmit",
+				"additionalContext": buf.String(),
+			},
+		})
+	}
 	if len(due) == 0 {
 		if !*quiet {
 			fmt.Fprintln(a.stdout, "[later] no reminders due")
 		}
 		return nil
 	}
-	fmt.Fprintf(a.stdout, "[later] %d due:\n", len(due))
+	a.writeDue(a.stdout, due)
+	return nil
+}
+
+// writeDue renders the due list a session sees, shared by the plain-text and
+// hook-envelope paths so both agents read exactly the same summary.
+func (a *app) writeDue(w io.Writer, due []store.Item) {
+	fmt.Fprintf(w, "[later] %d due:\n", len(due))
 	limit := min(3, len(due))
 	idWidth := widestID(due[:limit], 16)
 	for _, item := range due[:limit] {
 		scopeName := scopeLabel(item.Scope)
 		when := relativeWhen(item.NotBefore, a.now())
 		prefix := fmt.Sprintf("  %-*s %-12s %-12s ", idWidth, item.ID, truncate(scopeName, 12), truncate(when, 12))
-		fmt.Fprintln(a.stdout, prefix+truncate(item.Subject, max(10, 100-len(prefix))))
+		fmt.Fprintln(w, prefix+truncate(item.Subject, max(10, 100-len(prefix))))
 	}
 	if len(due) > limit {
-		fmt.Fprintf(a.stdout, "  ...and %d more (later list)\n", len(due)-limit)
+		fmt.Fprintf(w, "  ...and %d more (later list)\n", len(due)-limit)
 	}
-	fmt.Fprintln(a.stdout, "  `later show <id>` for detail · `later done <id>` when handled")
-	return nil
+	fmt.Fprintln(w, "  `later show <id>` for detail · `later done <id>` when handled")
 }
 
 func (a *app) list(args []string, queue *store.Store) error {

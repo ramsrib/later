@@ -11,7 +11,12 @@ import (
 	"github.com/ramsrib/later/internal/store"
 )
 
-const hookCommand = "later check --quiet-if-empty"
+// Claude Code injects a hook's bare stdout as context. Codex parses stdout as
+// JSON and fails the hook on anything else, so it gets the envelope form.
+const (
+	claudeHookCommand = "later check --quiet-if-empty"
+	codexHookCommand  = "later check --hook-json"
+)
 
 func (a *app) install(args []string, _ *store.Store) error {
 	fs := newFlagSet("install", `later install (--claude | --codex | --all)`, a.stderr)
@@ -38,7 +43,7 @@ func (a *app) install(args []string, _ *store.Store) error {
 		if err != nil {
 			return err
 		}
-		added, err := mergeHookFile(path)
+		added, err := mergeHookFile(path, claudeHookCommand)
 		if err != nil {
 			return fmt.Errorf("Claude hook: %w", err)
 		}
@@ -53,7 +58,7 @@ func (a *app) install(args []string, _ *store.Store) error {
 		if err != nil {
 			return err
 		}
-		added, err := mergeHookFile(path)
+		added, err := mergeHookFile(path, codexHookCommand)
 		if err != nil {
 			return fmt.Errorf("Codex hook: %w", err)
 		}
@@ -100,7 +105,7 @@ func codexConfigPath() (string, error) {
 	return filepath.Join(home, ".codex", "config.toml"), nil
 }
 
-func mergeHookFile(path string) (bool, error) {
+func mergeHookFile(path, hookCommand string) (bool, error) {
 	root := map[string]any{}
 	b, err := os.ReadFile(path)
 	if err == nil {
@@ -113,8 +118,16 @@ func mergeHookFile(path string) (bool, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return false, fmt.Errorf("read %s: %w", path, err)
 	}
-	if hasHook(root) {
+	if hasHook(root, hookCommand) {
 		return false, nil
+	}
+	// An earlier later wrote the other agent's command here; rewrite it in place
+	// rather than leaving a second, wrong-shaped hook behind.
+	if upgradeHookCommand(root, hookCommand) {
+		if err := writeIndentedJSON(path, root); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 	hooks, ok := root["hooks"].(map[string]any)
 	if !ok {
@@ -139,14 +152,43 @@ func mergeHookFile(path string) (bool, error) {
 	return true, nil
 }
 
-func hasHook(root map[string]any) bool {
+func hasHook(root map[string]any, hookCommand string) bool {
+	found := false
+	eachHookCommand(root, func(command map[string]any) {
+		if command["command"] == hookCommand {
+			found = true
+		}
+	})
+	return found
+}
+
+// upgradeHookCommand rewrites any later-owned command that is not the one this
+// agent needs, and reports whether it changed anything.
+func upgradeHookCommand(root map[string]any, hookCommand string) bool {
+	changed := false
+	eachHookCommand(root, func(command map[string]any) {
+		current, ok := command["command"].(string)
+		if !ok || !isLaterHookCommand(current) {
+			return
+		}
+		command["command"] = hookCommand
+		changed = true
+	})
+	return changed
+}
+
+func isLaterHookCommand(command string) bool {
+	return command == claudeHookCommand || command == codexHookCommand
+}
+
+func eachHookCommand(root map[string]any, visit func(map[string]any)) {
 	hooks, ok := root["hooks"].(map[string]any)
 	if !ok {
-		return false
+		return
 	}
 	event, ok := hooks["UserPromptSubmit"].([]any)
 	if !ok {
-		return false
+		return
 	}
 	for _, rawEntry := range event {
 		entry, ok := rawEntry.(map[string]any)
@@ -158,13 +200,11 @@ func hasHook(root map[string]any) bool {
 			continue
 		}
 		for _, rawCommand := range commands {
-			command, ok := rawCommand.(map[string]any)
-			if ok && command["command"] == hookCommand {
-				return true
+			if command, ok := rawCommand.(map[string]any); ok {
+				visit(command)
 			}
 		}
 	}
-	return false
 }
 
 func writeIndentedJSON(path string, value any) error {
@@ -192,7 +232,7 @@ func writeIndentedJSON(path string, value any) error {
 	return nil
 }
 
-func hookPresentAt(path string) (bool, error) {
+func hookPresentAt(path, hookCommand string) (bool, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
@@ -201,5 +241,5 @@ func hookPresentAt(path string) (bool, error) {
 	if err := json.Unmarshal(b, &root); err != nil {
 		return false, err
 	}
-	return hasHook(root), nil
+	return hasHook(root, hookCommand), nil
 }

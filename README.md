@@ -28,6 +28,8 @@ later install --codex
 
 Hook installation merges into existing settings instead of replacing them. Claude Code uses `~/.claude/settings.json`; Codex uses `~/.codex/hooks.json`.
 
+The two agents get different commands. Claude Code injects a hook's bare stdout as context, so it runs `later check --quiet-if-empty`. Codex parses hook stdout strictly as JSON and fails the hook on anything else — `hook returned invalid user prompt submit JSON output` — so it runs `later check --hook-json`, which wraps the same summary in the `UserPromptSubmit` envelope. Installing over a hooks file that carries the other command rewrites it in place.
+
 Codex requires interactive trust approval for a new hook. Until it is approved, Codex silently skips the hook even though the configuration is present. Start an interactive Codex session, approve the hook, then run:
 
 ```sh
@@ -68,7 +70,7 @@ later done review-rollout-a1b2c3
 
 ```text
 later add --subject S [--body B|-] (--at TIME | --in DUR) [--recur DUR] [--global] [--id ID]
-later check [--quiet-if-empty] [--json]
+later check [--quiet-if-empty] [--json] [--hook-json]
 later list [--all] [--here] [--json]
 later show <id>
 later done <id>
