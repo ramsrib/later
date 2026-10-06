@@ -17,7 +17,7 @@ import (
 )
 
 func (a *app) add(args []string, queue *store.Store) error {
-	fs := newFlagSet("add", `later add --subject S [--body B|-] (--at TIME | --in DUR) [--recur DUR] [--global] [--id ID]`, a.stderr)
+	fs := newFlagSet("add", `later add --subject S [--body B|-] (--at TIME | --in DUR) [--recur DUR] [--global] [--id ID [--replace]]`, a.stderr)
 	subject := fs.String("subject", "", "short reminder subject (required)")
 	bodyValue := fs.String("body", "", "longer detail, or - to read stdin")
 	atValue := fs.String("at", "", "RFC3339 or YYYY-MM-DD HH:MM local time")
@@ -25,6 +25,7 @@ func (a *app) add(args []string, queue *store.Store) error {
 	recurValue := fs.String("recur", "", "repeat interval using the same duration syntax")
 	global := fs.Bool("global", false, "make the reminder visible in every project")
 	idValue := fs.String("id", "", "stable unique id (generated from subject by default)")
+	replace := fs.Bool("replace", false, "overwrite an outstanding reminder with the same --id instead of refusing")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,13 +80,32 @@ func (a *app) add(args []string, queue *store.Store) error {
 	if strings.ContainsAny(id, " \t\r\n") || id == "" {
 		return fmt.Errorf("id must be non-empty and contain no whitespace")
 	}
+	if *replace && *idValue == "" {
+		return fmt.Errorf("--replace needs --id: a generated id never matches an existing reminder")
+	}
 	item := store.Item{ID: id, Subject: *subject, Body: body, Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: now.UTC(), By: detectAgent()}
 	if err := queue.Update(func(items []store.Item) ([]store.Item, error) {
+		// A done reminder is history, not a claim on its id. Refusing it muted
+		// every stable id after its first `done`: a job re-adding "x-broken" on
+		// the next breakage failed, and the breakage went unreported. So only an
+		// outstanding record blocks, and every record with the id (a hand-edited
+		// or migrated store can hold several) collapses into the new one.
+		kept := items[:0]
 		for _, existing := range items {
-			if existing.ID == id {
-				return nil, fmt.Errorf("id %q already exists", id)
+			if existing.ID != id {
+				kept = append(kept, existing)
+				continue
+			}
+			if existing.DoneAt == nil {
+				if !*replace {
+					return nil, fmt.Errorf("id %q already exists (--replace overwrites it)", id)
+				}
+				// The condition is the same one, still unhandled: keep when it
+				// first appeared, take everything else from the new report.
+				item.CreatedAt = existing.CreatedAt
 			}
 		}
+		items = kept
 		return append(items, item), nil
 	}); err != nil {
 		return err

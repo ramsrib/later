@@ -66,10 +66,19 @@ later done review-rollout-a1b2c3
 
 `done` completes a one-shot item. For a recurring item it advances the same record to the first occurrence strictly after the current time, collapsing any missed occurrences. `cancel` permanently removes either kind.
 
+### Stable ids, for scripts that report a condition
+
+A script that checks something on a schedule (a CI queue, free disk, a broken credential) wants one reminder per condition, not one per run. Give it a fixed `--id`:
+
+- `add --id X` while `X` is outstanding is refused, so repeat runs collapse into the first report.
+- `add --id X --replace` overwrites the outstanding `X` with the new record, keeping only its original creation time. Everything else comes from this call, omitted options included: leave out `--global` or `--recur` and the replacement is project-scoped or one-shot. Use it when the latest report supersedes the earlier one, such as a queue whose contents change daily. Pass a short `--in` (say `1m`): a frequent job replacing with `--in 2h` pushes the due time back on every run and never comes due.
+- Once `X` is done, `add --id X` re-arms it. A handled condition that comes back is reported again.
+- When the script sees the condition clear, `later done X` retires a one-shot `X` (ignore the error if there is nothing to retire). A recurring one only advances; `cancel` ends it.
+
 ## Commands
 
 ```text
-later add --subject S [--body B|-] (--at TIME | --in DUR) [--recur DUR] [--global] [--id ID]
+later add --subject S [--body B|-] (--at TIME | --in DUR) [--recur DUR] [--global] [--id ID [--replace]]
 later check [--quiet-if-empty] [--json] [--hook-json]
 later list [--all] [--here] [--json]
 later show <id>

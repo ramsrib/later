@@ -99,3 +99,135 @@ func TestCheckHookJSONEmitsParseableEnvelope(t *testing.T) {
 		t.Fatalf("additionalContext missing the due reminder: %q", context)
 	}
 }
+
+func addArgs(id, subject string, extra ...string) []string {
+	return append([]string{"--global", "--in", "1m", "--id", id, "--subject", subject}, extra...)
+}
+
+func runCmd(t *testing.T, queue *store.Store, cmd string, args ...string) error {
+	t.Helper()
+	var stdout, stderr bytes.Buffer
+	return Run(cmd, args, queue, &stdout, &stderr)
+}
+
+func onlyItem(t *testing.T, queue *store.Store, id string) store.Item {
+	t.Helper()
+	items, _, err := queue.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []store.Item
+	for _, item := range items {
+		if item.ID == id {
+			found = append(found, item)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("got %d records for %q, want 1", len(found), id)
+	}
+	return found[0]
+}
+
+// A job files "x-broken" with a fixed id. Once a human marks it done, the next
+// breakage has to be able to file it again, or the breakage goes unreported.
+func TestAddReArmsDoneID(t *testing.T) {
+	t.Setenv("LATER_STORE", filepath.Join(t.TempDir(), "items.jsonl"))
+	queue, err := store.Open(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", addArgs("x-broken", "first")...); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "done", "x-broken"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", addArgs("x-broken", "second")...); err != nil {
+		t.Fatalf("re-adding a done id: %v", err)
+	}
+	item := onlyItem(t, queue, "x-broken")
+	if item.DoneAt != nil || item.Subject != "second" {
+		t.Fatalf("re-armed item = %+v, want outstanding with subject second", item)
+	}
+}
+
+func TestAddRefusesOutstandingIDWithoutReplace(t *testing.T) {
+	t.Setenv("LATER_STORE", filepath.Join(t.TempDir(), "items.jsonl"))
+	queue, err := store.Open(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", addArgs("drift", "first")...); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", addArgs("drift", "second")...); err == nil {
+		t.Fatal("second add of an outstanding id succeeded, want refusal")
+	}
+	if item := onlyItem(t, queue, "drift"); item.Subject != "first" {
+		t.Fatalf("subject = %q, want the first report kept", item.Subject)
+	}
+}
+
+func TestAddReplaceOverwritesOutstandingKeepingCreatedAt(t *testing.T) {
+	t.Setenv("LATER_STORE", filepath.Join(t.TempDir(), "items.jsonl"))
+	queue, err := store.Open(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", addArgs("queue", "1 blocked", "--body", "old")...); err != nil {
+		t.Fatal(err)
+	}
+	created := onlyItem(t, queue, "queue").CreatedAt
+	if err := runCmd(t, queue, "add", addArgs("queue", "4 blocked", "--body", "new", "--replace")...); err != nil {
+		t.Fatal(err)
+	}
+	item := onlyItem(t, queue, "queue")
+	if item.Subject != "4 blocked" || item.Body != "new" {
+		t.Fatalf("replaced item = %+v, want the new report", item)
+	}
+	if !item.CreatedAt.Equal(created) {
+		t.Fatalf("CreatedAt = %s, want original %s", item.CreatedAt, created)
+	}
+	if err := runCmd(t, queue, "add", append(addArgs("fresh", "x"), "--replace")...); err != nil {
+		t.Fatalf("--replace with no existing record: %v", err)
+	}
+}
+
+func TestAddReplaceNeedsID(t *testing.T) {
+	t.Setenv("LATER_STORE", filepath.Join(t.TempDir(), "items.jsonl"))
+	queue, err := store.Open(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", "--in", "1m", "--subject", "x", "--replace"); err == nil {
+		t.Fatal("--replace without --id succeeded")
+	}
+}
+
+// A migrated or hand-edited store can hold several records for one id. A done
+// one must not let an outstanding duplicate slip past the guard.
+func TestAddCollapsesDuplicateRecords(t *testing.T) {
+	t.Setenv("LATER_STORE", filepath.Join(t.TempDir(), "items.jsonl"))
+	queue, err := store.Open(true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := time.Now().UTC().Add(-time.Hour)
+	if err := queue.Update(func(items []store.Item) ([]store.Item, error) {
+		return append(items,
+			store.Item{ID: "dup", Subject: "old", Scope: "global", NotBefore: done, CreatedAt: done, DoneAt: &done},
+			store.Item{ID: "dup", Subject: "open", Scope: "global", NotBefore: done, CreatedAt: done},
+		), nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCmd(t, queue, "add", addArgs("dup", "new")...); err == nil {
+		t.Fatal("add over an outstanding duplicate succeeded without --replace")
+	}
+	if err := runCmd(t, queue, "add", addArgs("dup", "new", "--replace")...); err != nil {
+		t.Fatal(err)
+	}
+	if item := onlyItem(t, queue, "dup"); item.Subject != "new" || item.DoneAt != nil {
+		t.Fatalf("collapsed item = %+v", item)
+	}
+}
