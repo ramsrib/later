@@ -13,19 +13,38 @@ func resolveScope() (string, error) {
 		// target a scope that does not currently exist.
 		return value, nil
 	}
-	if value := os.Getenv("CLAUDE_PROJECT_DIR"); value != "" {
-		return canonicalPath(value)
-	}
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		if root := strings.TrimSpace(string(out)); root != "" {
-			return canonicalPath(root)
+	dir := os.Getenv("CLAUDE_PROJECT_DIR")
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", err
 		}
+		dir = cwd
 	}
-	cwd, err := os.Getwd()
+	if root := mainCheckout(dir); root != "" {
+		return canonicalPath(root)
+	}
+	return canonicalPath(dir)
+}
+
+// mainCheckout is the repository's main working tree for dir, or "" outside
+// git. A linked worktree resolves to its main checkout: a reminder added in a
+// worktree belongs to the repo, and scoping it to the worktree path stranded
+// it once the worktree was removed (and hid the repo's reminders from it).
+func mainCheckout(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir", "--show-toplevel").Output()
 	if err != nil {
-		return "", err
+		return ""
 	}
-	return canonicalPath(cwd)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) != 2 {
+		return ""
+	}
+	common, top := strings.TrimSpace(lines[0]), strings.TrimSpace(lines[1])
+	if filepath.Base(common) == ".git" {
+		return filepath.Dir(common)
+	}
+	return top // a bare repo or a separate git dir: the worktree is all we know
 }
 
 func canonicalPath(value string) (string, error) {

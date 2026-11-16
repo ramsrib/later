@@ -100,7 +100,7 @@ Run `later <command> --help` for the options and purpose of any command.
 
 ## Scope and storage
 
-Project scope is resolved consistently under both agents: an explicit `LATER_SCOPE`, then `CLAUDE_PROJECT_DIR`, then the Git worktree root, and finally the current directory. `--global` makes an item visible everywhere.
+Project scope is resolved consistently under both agents: an explicit `LATER_SCOPE`; otherwise `CLAUDE_PROJECT_DIR` (or the current directory) mapped to its repository's main checkout, so a reminder added in a linked worktree belongs to the repo and outlives the worktree; outside Git, the directory itself. `--global` makes an item visible everywhere.
 
 Records live in `~/.later/items.jsonl`, one JSON object per line. Set `LATER_STORE` to use another file. Writes create the parent directory on demand.
 
