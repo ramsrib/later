@@ -231,3 +231,25 @@ func TestAddCollapsesDuplicateRecords(t *testing.T) {
 		t.Fatalf("collapsed item = %+v", item)
 	}
 }
+
+func TestWriteDueShowsNewestFirstAndFoldsStale(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	a := &app{now: func() time.Time { return now }}
+	due := []store.Item{
+		{ID: "rotten", Scope: "global", Subject: "old", NotBefore: now.Add(-40 * 24 * time.Hour)},
+		{ID: "older", Scope: "global", Subject: "older", NotBefore: now.Add(-3 * 24 * time.Hour)},
+		{ID: "newest", Scope: "global", Subject: "newest", NotBefore: now.Add(-time.Hour)},
+	}
+	var buf bytes.Buffer
+	a.writeDue(&buf, due)
+	out := buf.String()
+	if strings.Contains(out, "rotten") {
+		t.Fatalf("stale item listed by name:\n%s", out)
+	}
+	if !strings.Contains(out, "1 stale") {
+		t.Fatalf("stale count missing:\n%s", out)
+	}
+	if strings.Index(out, "newest") > strings.Index(out, "older") {
+		t.Fatalf("newest due should come first:\n%s", out)
+	}
+}

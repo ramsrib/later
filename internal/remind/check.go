@@ -213,18 +213,37 @@ func (a *app) check(args []string, queue *store.Store) error {
 
 // writeDue renders the due list a session sees, shared by the plain-text and
 // hook-envelope paths so both agents read exactly the same summary.
+// staleAfter is how overdue an item gets before the hook stops listing it by
+// name. Showing oldest-first made every prompt repeat the same few rotten items
+// while fresh ones hid behind "...and N more".
+const staleAfter = 14 * 24 * time.Hour
+
 func (a *app) writeDue(w io.Writer, due []store.Item) {
+	now := a.now()
+	var fresh, stale []store.Item
+	for _, item := range due {
+		if now.Sub(item.NotBefore) >= staleAfter {
+			stale = append(stale, item)
+		} else {
+			fresh = append(fresh, item)
+		}
+	}
+	// Most recently due first: what just came due is what this session can act on.
+	sort.SliceStable(fresh, func(i, j int) bool { return fresh[i].NotBefore.After(fresh[j].NotBefore) })
 	fmt.Fprintf(w, "[later] %d due:\n", len(due))
-	limit := min(3, len(due))
-	idWidth := widestID(due[:limit], 16)
-	for _, item := range due[:limit] {
+	limit := min(3, len(fresh))
+	idWidth := widestID(fresh[:limit], 16)
+	for _, item := range fresh[:limit] {
 		scopeName := scopeLabel(item.Scope)
-		when := relativeWhen(item.NotBefore, a.now())
+		when := relativeWhen(item.NotBefore, now)
 		prefix := fmt.Sprintf("  %-*s %-12s %-12s ", idWidth, item.ID, truncate(scopeName, 12), truncate(when, 12))
 		fmt.Fprintln(w, prefix+truncate(item.Subject, max(10, 100-len(prefix))))
 	}
-	if len(due) > limit {
-		fmt.Fprintf(w, "  ...and %d more (later list)\n", len(due)-limit)
+	if len(fresh) > limit {
+		fmt.Fprintf(w, "  ...and %d more (later list)\n", len(fresh)-limit)
+	}
+	if len(stale) > 0 {
+		fmt.Fprintf(w, "  %d stale (over %d days overdue): later list, then done, cancel or move each\n", len(stale), int(staleAfter/(24*time.Hour)))
 	}
 	fmt.Fprintln(w, "  `later show <id>` for detail · `later done <id>` when handled")
 }

@@ -97,8 +97,8 @@ func (a *app) doctor(args []string, queue *store.Store) int {
 		}
 	}
 	if overdue != 0 {
-		a.doctorLine(false, "old overdue", "%d outstanding item(s) are more than 30 days overdue; hooks may not be consuming the queue", overdue)
-		failures++
+		// A backlog is not a broken install: report it, don't fail on it.
+		fmt.Fprintf(a.stdout, "WARN %-13s %s\n", "old overdue", fmt.Sprintf("%d outstanding item(s) are more than 30 days overdue (later list --all)", overdue))
 	} else {
 		a.doctorLine(true, "old overdue", "0 outstanding items older than 30 days")
 	}
