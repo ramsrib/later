@@ -22,6 +22,10 @@ type Item struct {
 	CreatedAt time.Time  `json:"created_at"`
 	DoneAt    *time.Time `json:"done_at"`
 	By        string     `json:"by"`
+	// Session and Cwd record the agent session that added the item, so a
+	// reader can resume it when the context to act on the item lives there.
+	Session string `json:"session,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
 }
 
 type Store struct {

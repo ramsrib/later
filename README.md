@@ -64,6 +64,16 @@ later show review-rollout-a1b2c3
 later done review-rollout-a1b2c3
 ```
 
+`show` also names the session that added the item and how to reopen it, for when the context needed to act on it lives in that session:
+
+```text
+By: claude
+Session: 3f2c9a1e-…
+Resume: cd /Users/me/proj && claude --resume 3f2c9a1e-…
+```
+
+`add` records this on its own: the session id from `CODEX_THREAD_ID` under Codex or `CLAUDE_CODE_SESSION_ID` under Claude Code, and the directory to resume from. Under Claude Code that is the session's project directory, read from its transcript, since `claude --resume` finds a session only from there. Items added from a plain shell have no session and no `Resume` line.
+
 `done` completes a one-shot item. For a recurring item it advances the same record to the first occurrence strictly after the current time, collapsing any missed occurrences. `cancel` permanently removes either kind.
 
 ### Stable ids, for scripts that report a condition

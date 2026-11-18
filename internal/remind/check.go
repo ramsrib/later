@@ -83,7 +83,8 @@ func (a *app) add(args []string, queue *store.Store) error {
 	if *replace && *idValue == "" {
 		return fmt.Errorf("--replace needs --id: a generated id never matches an existing reminder")
 	}
-	item := store.Item{ID: id, Subject: *subject, Body: body, Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: now.UTC(), By: detectAgent()}
+	from := detectOrigin()
+	item := store.Item{ID: id, Subject: *subject, Body: body, Scope: scope, NotBefore: notBefore.UTC(), Recur: recur, CreatedAt: now.UTC(), By: from.by, Session: from.session, Cwd: from.cwd}
 	if err := queue.Update(func(items []store.Item) ([]store.Item, error) {
 		// A done reminder is history, not a claim on its id. Refusing it muted
 		// every stable id after its first `done`: a job re-adding "x-broken" on
@@ -416,6 +417,12 @@ func (a *app) show(args []string, queue *store.Store) error {
 		fmt.Fprintf(a.stdout, "Done at: %s\n", item.DoneAt.Format(time.RFC3339))
 	}
 	fmt.Fprintf(a.stdout, "By: %s\n", item.By)
+	if item.Session != "" {
+		fmt.Fprintf(a.stdout, "Session: %s\n", item.Session)
+	}
+	if cmd := resumeCommand(item); cmd != "" {
+		fmt.Fprintf(a.stdout, "Resume: %s\n", cmd)
+	}
 	return nil
 }
 
